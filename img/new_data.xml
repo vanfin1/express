@@ -1,0 +1,56 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<config>
+<items>
+<item q="Еще неизвестно, поедем ли мы на море" a="If we will go to the sea is uncertain"/>
+<item q="Точно неизвестно, будет ли у меня отпуск" a="If I will have got a holiday is uncertain"/>
+<item q="Мне не ясно, куда мы поедем" a="Where we will go is unclear for me"/>
+<item q="Непонятно, почему они не купили эту квартиру" a="Why they didn't bye this flat is uncertain"/>
+<item q="Интересно, как она готовит этот суп" a="How she cooks this soup is interesting"/>
+<item q="Плохо, что ты не знаешь английского" a="What you don't know English is bad"/>
+<item q="Великолепно, что мы вместе" a="What we are together is splendid"/>
+<item q="Никому не ясно, почему он сделал это" a="Why he did it is unclear for anybody"/>
+<item q="Странно, что ты это говоришь" a="What you say is strange"/>
+<item q="Точно неизвестно, что они копили" a="What they bought is uncertain"/>
+<item q="Никому не ясно, что мы будем делать" a="What we will do is unclear for anybody"/>
+<item q="Интересно, пойдешь ли ты завтра на работу" a="If you will go at work tomorrow is interesting"/>
+<item q="Великолепно, что у меня есть эта книга" a="What I have got this book is splendid"/>
+<item q="Странно, что ты его не знаешь" a="What you don't know him is strange"/>
+<item q="Непонятно, как она делает эту работу" a="How she does this work is uncertain"/>
+<item q="Интересно, как ты готовишь эту овсяную кашу" a="How you cook this porage is interesting"/>
+<item q="Плохо, что он не читает книг" a="What he doesn't read books is bad"/>
+<item q="Точно неизвестно, получим ли мы деньги" a="If we will get the money is uncertain"/>
+<item q="Странно, что у него маленькая зарплата" a="What he has got a small salary is strange"/>
+<item q="Хорошо, что вы знаете, что ей знаете" a="What you know that she likes is good"/>
+<item q="Странно, что вы это спрашиваете" a="It is strange that you are asking"/>
+<item q="Неизвестно, поженимся ли мы" a="It is uncertain if we will marry"/>
+<item q="Это неизвестно, с кем останется этот ребенок" a="It is not clear whom our baby will stay with"/>
+<item q="Еще неизвестно, поступит ли он в институт" a="It is not known yet whether he has entered the institute"/>
+<item q="Замечательно, как ты делаешь это" a="It is splendid how you do it"/>
+<item q="Странно то, что ты говоришь" a="It is strange what you are saying"/>
+<item q="То, что вы говорите, очень интересно" a="What you are saying is interesting"/>
+<item q="Необычно, что он не опоздал" a="It is unusual that he is not late"/>
+<item q="Замечательно, как он поет эту песню" a="It is splendid how you sing this song"/>
+<item q="Ясно где мы должны встретиться" a="It is clear where we shall meet"/>
+<item q="Интересно что вы здесь" a="It is interesting that you are here"/>
+<item q="Неизвестно как работают компьютеры" a="It is uncertaing how the computer works "/>
+<item q="Замечательно что она написала ему" a="It is splendid that she wrote to him"/>
+<item q="Интересно, о ком он говорит" a="Who he speaks about is interesting "/>
+<item q="Интересно, что она говорит" a="What she says is interesting"/>
+<item q="Непонятно, где работет Бен" a="Where Ben works is uncertain"/>
+<item q="Непонятно, где он зарабатывает свои деньги" a="Where he earns his money is uncertain"/>
+<item q="qt38" a="at38"/>
+<item q="qt39" a="at39"/>
+<item q="qt40" a="at40"/>
+<item q="qt41" a="at41"/>
+<item q="qt42" a="at42"/>
+<item q="qt43" a="at43"/>
+<item q="qt44" a="at44"/>
+<item q="qt45" a="at45"/>
+<item q="qt46" a="at46"/>
+<item q="qt47" a="at47"/>
+<item q="qt48" a="at48"/>
+<item q="qt49" a="at49"/>
+<item q="qt50" a="at50"/>
+
+</items>
+</config>
