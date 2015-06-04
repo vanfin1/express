@@ -1843,7 +1843,7 @@ if (proc=='messageText'){
 	x = result.messagetext;
 	log.info('messagetext='+JSON.stringify(x));
 	if (x.error==1){
-	if (x.message_text.length==0) {
+	if ((x.message_text.length==0) && (x.message_text.indexOf('Error')=-1)) {
 	var result = '';
 			l_lang = 'rus-RUS';
 			if (x.lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
