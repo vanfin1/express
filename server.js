@@ -544,7 +544,7 @@ app.get('/wt/wt.gtw.messagecontent', function(req, res){
  var in_token = req.query.in_token; 
  var pa = new Array();
  pa[0] = {name: "in_message_id", value: in_message_id};
- pa[1] = {name: "in_token", value: in_token};
+ //pa[1] = {name: "in_token", value: in_token};
 // in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
  var s = 'SELECT wt.messagecontent('+in_message_id+',\''+in_token+'\');';
  pg_connect_with_signature(conString, 'messageContent', s, pa, in_token, in_signature, null, res);
