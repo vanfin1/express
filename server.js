@@ -72,7 +72,7 @@ app.use(bodyParser.json()); // стандартный модуль, для парсинга JSON в запросах
 //app.use(express.methodOverride()); // поддержка put и delete
 //app.use(app.router); // модуль для простого задания обработчиков путей
 app.use(express.static(path.join(__dirname, "public"))); // запуск статического файлового сервера, который смотрит на папку public/ (в нашем случае отдает index.html)
-
+log.info('conString='+conString);
 pg_connect_get_users(conString);
 
 
@@ -1997,6 +1997,7 @@ if (proc=='getAuthortagmessages2'){
 app.get('/download/:file(*)', function(req, res, next){
   var file = req.params.file; 
   var path = __dirname + '/img/' + file;
+  log.info('path='+path);
   log.debug('file='+file);
   res.download(path);
 });
