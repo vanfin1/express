@@ -1,5 +1,6 @@
+var path            = require('path');
 var express         = require('express');
-var path            = require('path'); // модуль для парсинга пути
+ // модуль для парсинга пути
 var morgan = require('morgan');
 //var mongoose = require('mongoose');
 var bodyParser = require('body-parser') ;
