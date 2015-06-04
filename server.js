@@ -26,7 +26,7 @@ log.info('port='+config.get('port'));
 
 var app = express();
 
-var conString = "postgres://wt:wt@pgwt.c7tsdy3sw7ks.eu-central-1.rds.amazonaws.com:5432/pg_wt2";
+var conString = config.get('postgresConnection');
 
 var mainPath = config.get('mainPath')//'C:/Users/VGA/nodeapi/';
 var publicDirectory = 'img';
