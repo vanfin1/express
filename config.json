@@ -1,5 +1,5 @@
 {
     "port" : 1337,
-	"mainPath" : "C:/Users/VGA/express_server/",
+	"mainPath" : "/home/ec2-user/node/express",
 	"postgresConnection" : "postgres://wt:wt@pgwt.c7tsdy3sw7ks.eu-central-1.rds.amazonaws.com:5432/pgwt"
 }
