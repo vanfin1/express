@@ -1,5 +1,6 @@
 var path            = require('path');
 var express         = require('express');
+var encryptor = require('file-encryptor');
  // модуль для парсинга пути
 var morgan = require('morgan');
 //var mongoose = require('mongoose');
@@ -11,23 +12,16 @@ var md5             = require('./libs/md5.js');
 var config          = require('./libs/config');
 //var request = require('request');
 var http = require('http');
-
 var busboy = require('connect-busboy'); //middleware for form/file upload
 var path = require('path');     //used for file path
 var fs = require('fs-extra');       //File System - for file manipulation
-
 var pg = require('pg');
 var net = require('net');
-
 var ffmpeg = require('liquid-ffmpeg');
-
 var u = [];
 log.info('port='+config.get('port'));
-
 var app = express();
-
 var conString = config.get('postgresConnection');
-
 var mainPath = config.get('mainPath')//'C:/Users/VGA/nodeapi/';
 var publicDirectory = 'img';
     var storageFormat = '.wav';
@@ -40,18 +34,10 @@ var publicDirectory = 'img';
 	var recognizingAppId = 'NMDPTRIAL_vanfin120120219013811';
 	var recognizingAppKey = '22936f2466829b67614bb0cc61b510f776dbadb59395facac8dce35e49d4f36c676290cee42b354577e511d89a22d010fd7dc69012c05ada9d3e39e6122c5279';
 	var recognizingContentType = 'audio/x-wav;codec=pcm;bit=16;rate=8000';
-	
-
 //this starts initializes a connection pool
 //it will keep idle connections open for a (configurable) 30 seconds
 //and set a limit of 20 (also configurable)
-
-
-
-
 app.use(busboy());
-
-
 
 (function() {
     var childProcess = require("child_process");
@@ -113,9 +99,9 @@ function checkSignature2(paramarray, token, secret, signature, res){
 		s = s + "&" + paramarray[k].name + "=" + paramarray[k].value;
 	};
 	var current_signature = md5.hex_md5("secret_key="+secret+"&token="+token+s);
-	log.info('s='+s);
-	log.info('current_signature='+current_signature);
-	log.info('signature='+signature);
+	//log.info('s='+s);
+	//log.info('current_signature='+current_signature);
+	//log.info('signature='+signature);
 	if (current_signature!=signature) {
 		return 0;
 	} else {
@@ -128,8 +114,8 @@ function checkSignature2(paramarray, token, secret, signature, res){
 
 function pg_connect_with_signature(cs, proc, select_string, pa, token, signature, user_id, res) {
 	var x = u[token];
-	log.info('proc='+proc);
-	log.info('token='+token);
+	//log.info('proc='+proc);
+	//log.info('token='+token);
 	if (x != undefined) {
 		log.info('x='+x.id);
 		if (checkSignature2(pa, token, x.secret.trim(), signature, res)==1) {
@@ -139,8 +125,35 @@ function pg_connect_with_signature(cs, proc, select_string, pa, token, signature
 			return res.json(y).send;
 		};
 	} else {
-		var y = { success : 0, error_text: "InvalidToken" };
-		return res.json(y).send;
+	    pg.connect(cs, function(err, client, done) {
+			if(err) {return console.error('error fetching client from pool', err);}
+			client.query('select wt.gettoken2( \'' + token + '\');', function(err, result) {
+    //call `done()` to release the client back to the pool
+				done();
+				if(err) {return console.error('error running query', err);}
+			//	console.log(result.rows[0]);
+				var x1 = result.rows[0].gettoken2;
+				if (x1.success == 1) {
+					u[x1.token]={'id':x1.user_id,'secret':x1.secret};
+					var x = u[x1.token];
+					if (x!=undefined) {
+					if (checkSignature2(pa, token, x.secret.trim(), signature, res)==1) {
+						return pg_connect(cs, proc, select_string, res);
+					} else {
+						var y = { success : 0, error_text: "InvalidSignature" };
+						return res.json(y).send;
+					};
+					} else {
+					    var y = { success : 0, error_text: "InvalidToken" };
+						return res.json(y).send;
+					}
+				} else {
+					var y = { success : 0, error_text: "InvalidToken" };
+					return res.json(y).send;
+				}
+			});
+		});
+		
 	}
 }
 
@@ -566,6 +579,8 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
  log.info('query='+req.query.toString());
  var in_acl = req.query.in_acl;
  var in_author_comment = req.query.in_author_comment;
+ var in_completed_method = req.query.in_completed_method;
+ var in_delete_on_completed = req.query.in_delete_on_completed; 
  var in_delivery_date = req.query.in_delivery_date;
  var in_direct_msg = req.query.in_direct_msg;
  var in_due_date = req.query.in_due_date;
@@ -592,6 +607,8 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	var k = -1;
 	if (in_acl!=undefined) { pa[++k] = {name: "in_acl", value: in_acl} } else {in_acl=''};
 	if (in_author_comment!=undefined) { pa[++k] = {name: "in_author_comment", value: in_author_comment} } else {in_author_comment=''};
+	if (in_completed_method!=undefined) { pa[++k] = {name: "in_completed_method", value: in_completed_method} } else {in_completed_method=0};
+	if (in_delete_on_completed!=undefined) { pa[++k] = {name: "in_delete_on_completed", value: in_delete_on_completed} } else {in_delete_on_completed=0};	
 	if (in_delivery_date!=undefined) { pa[++k] = {name: "in_delivery_date", value: in_delivery_date} } else {in_delivery_date=''};
 	if (in_direct_msg!=undefined) { pa[++k] = {name: "in_direct_msg", value: in_direct_msg} } else {in_direct_msg=''};
 	if (in_due_date!=undefined) { pa[++k] = {name: "in_due_date", value: in_due_date} } else {in_due_date=''};
@@ -611,6 +628,7 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 		in_file_after = in_file + storageFormat;
 		sourceFile = mainPath+publicDirectory+'/'+in_file;
 		destFile = mainPath+publicDirectory+'/'+in_file_after;
+		encFile = mainPath+publicDirectory+'/'+in_file_after+'.dec';
 		tempFile = mainPath+in_file_after;
 		var proc = new ffmpeg({ source: sourceFile })
 		.withAudioBitrate(storageAudioBitrate)
@@ -623,9 +641,21 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 			var dest = fs.createWriteStream(destFile);
 			source.pipe(dest);
 			source.on('end', function() {
-				fs.unlinkSync(tempFile);	
-				var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\'\',0,\''+in_due_date+'\');';
-				pg_connect_with_signature(conString, 'postMessagesv2', s, pa, in_token, in_signature, null, res);
+				fs.unlinkSync(tempFile);
+				var in_key = md5.hex_md5(in_token+in_file_after); 	
+				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
+				if (!err) {
+					fs.unlinkSync(destFile);
+				};
+					var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''
+				+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''
+				+in_end_date+'\',\''+in_length+'\',\'\',0,\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
+					pg_connect_with_signature(conString, 'postMessagesv2', s, pa, in_token, in_signature, null, res);
+  // Encryption complete.
+                
+				});
+				
+				
 			});
 			source.on('error', function(err) { /* error */
 				log.info(err);
@@ -633,8 +663,22 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 		})
 	} else {
 		in_file_after = in_file;
-		var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\'\',0,\''+in_due_date+'\');';
-		pg_connect_with_signature(conString, 'postMessagesv2', s, pa, in_token, in_signature, null, res);
+		destFile = mainPath+publicDirectory+'/'+in_file_after;
+		encFile = mainPath+publicDirectory+'/'+in_file_after+'.dec';
+				var in_key = md5.hex_md5(in_token+in_file_after); 	
+				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
+				if (!err) {
+					fs.unlinkSync(destFile);
+				};
+				var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+
+				'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+
+				in_length+'\',\'\',0,\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
+				pg_connect_with_signature(conString, 'postMessagesv2', s, pa, in_token, in_signature, null, res);
+					
+  // Encryption complete.
+                
+				});
+		
 	}
 	
 	/*post_data = in_file + 'START11223344' + in_file_after;
@@ -661,6 +705,8 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	var k = -1;
 	if (in_acl!=undefined) { pa[++k] = {name: "in_acl", value: in_acl} } else {in_acl=''};
 	if (in_author_comment!=undefined) { pa[++k] = {name: "in_author_comment", value: in_author_comment} } else {in_author_comment=''};
+	if (in_completed_method!=undefined) { pa[++k] = {name: "in_completed_method", value: in_completed_method} } else {in_completed_method=0};
+	if (in_delete_on_completed!=undefined) { pa[++k] = {name: "in_delete_on_completed", value: in_delete_on_completed} } else {in_delete_on_completed=0};	
 	if (in_delivery_date!=undefined) { pa[++k] = {name: "in_delivery_date", value: in_delivery_date} } else {in_delivery_date=''};
 	if (in_direct_msg!=undefined) { pa[++k] = {name: "in_direct_msg", value: in_direct_msg} } else {in_direct_msg=''};
 	if (in_draft!=undefined) { pa[++k] = {name: "in_draft", value: in_draft} } else {in_draft=0};	
@@ -687,6 +733,7 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	destFile = mainPath+publicDirectory+'/'+in_file_after;
 	tempFile = mainPath+in_file_after;
 	tempFileWav = mainPath+in_file_wav;
+	encFile = mainPath+publicDirectory+'/'+in_file_after+'.dec';
 
 	var proc = new ffmpeg({ source:  sourceFile}).withAudioBitrate(storageAudioBitrate).withAudioFrequency(storageAudioFrequency).addOption('-hide_banner', '-y').saveToFile(in_file_after, 
 	function(stdout, stderr) {
@@ -704,7 +751,8 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 			if (in_lang.toUpperCase() == 'DE') {l_lang = 'deu-DEU'};
     		
 			
-			var proc = new ffmpeg({ source: destFile }).withAudioBitrate(recognizingAudioBitrate).withAudioFrequency(recognizingAudioFrequency).withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
+			var proc = new ffmpeg({ source: destFile }).withAudioBitrate(recognizingAudioBitrate).withAudioFrequency(recognizingAudioFrequency)
+			.withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
 			function(stdout, stderr) {
 			var request = require('request');
 				request({
@@ -734,9 +782,19 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 						result = 'Server Error:'+response.statusCode+' unable to process request';
 					};
 				}
-				var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+result+'\','+in_draft+',\''+in_due_date+'\');';
+				var in_key = md5.hex_md5(in_token+in_file_after); 	
+				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
+				if (!err) {
+					fs.unlinkSync(destFile);
+				};
+					var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''
+					+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','
+					+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+result+'\','+in_draft+',\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
 				pg_connect_with_signature(conString, 'postMessagesv3', s, pa, in_token, in_signature, null, res);
 		
+  // Encryption complete.
+                
+				});
 				});
 			})
 
@@ -757,7 +815,7 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	destFile = mainPath+publicDirectory+'/'+in_file_after;
 	tempFile = mainPath+in_file_after;
 	tempFileWav = mainPath+in_file_wav;
-
+	encFile = mainPath+publicDirectory+'/'+in_file_after+'.dec';
 	
 			var result = '';
 			l_lang = 'rus-RUS';
@@ -796,8 +854,18 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 						result = 'Server Error:'+response.statusCode+' unable to process request';
 					};
 				}
-				var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+result+'\','+in_draft+',\''+in_due_date+'\');';
-				pg_connect_with_signature(conString, 'postMessagesv3', s, pa, in_token, in_signature, null, res);
+				var in_key = md5.hex_md5(in_token+in_file_after); 	
+				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
+					if (!err) {fs.unlinkSync(destFile);};
+					var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''
+					+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date
+					+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+result+'\','+in_draft+',\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
+					pg_connect_with_signature(conString, 'postMessagesv3', s, pa, in_token, in_signature, null, res);
+		
+  // Encryption complete.
+                
+				});
+			
 		
 				});
 			})
@@ -862,6 +930,8 @@ app.get('/wt/wt.gtw.postForwardedMessages', function(req, res){
  var in_acl = req.query.in_acl;
  var in_message_id = req.query.in_message_id;
  var in_author_comment = req.query.in_author_comment;
+ var in_completed_method = req.query.in_completed_method;
+ var in_delete_on_completed = req.query.in_delete_on_completed; 
  var in_delivery_date = req.query.in_delivery_date;
  var in_direct_msg = req.query.in_direct_msg;
  var in_due_date = req.query.in_due_date;
@@ -880,6 +950,8 @@ app.get('/wt/wt.gtw.postForwardedMessages', function(req, res){
 	var k = -1;
 	if (in_acl!=undefined) { pa[++k] = {name: "in_acl", value: in_acl} } else {in_acl=''};
 	if (in_author_comment!=undefined) { pa[++k] = {name: "in_author_comment", value: in_author_comment} } else {in_author_comment=''};
+	if (in_completed_method!=undefined) { pa[++k] = {name: "in_completed_method", value: in_completed_method} } else {in_completed_method=0};
+	if (in_delete_on_completed!=undefined) { pa[++k] = {name: "in_delete_on_completed", value: in_delete_on_completed} } else {in_delete_on_completed=0};	
 	if (in_delivery_date!=undefined) { pa[++k] = {name: "in_delivery_date", value: in_delivery_date} } else {in_delivery_date=''};
 	if (in_direct_msg!=undefined) { pa[++k] = {name: "in_direct_msg", value: in_direct_msg} } else {in_direct_msg=''};
 	if (in_due_date!=undefined) { pa[++k] = {name: "in_due_date", value: in_due_date} } else {in_due_date=''};
@@ -893,7 +965,7 @@ app.get('/wt/wt.gtw.postForwardedMessages', function(req, res){
 	if (in_user_id!=undefined) { pa[++k] = {name: "in_user_id", value: in_user_id} } else {in_user_id=''};
 	if (in_wait_reply!=undefined) { pa[++k] = {name: "in_wait_reply", value: in_wait_reply} } else {in_wait_reply=0};
 //	in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
-	var s = 'SELECT wt.postmessages('+in_message_id+','+in_user_id+',\'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+in_text+'\',0,\''+in_due_date+'\');';
+	var s = 'SELECT wt.postmessages('+in_message_id+','+in_user_id+',\'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+in_text+'\',0,\''+in_due_date+'\',\'\','+in_completed_method+','+in_delete_on_completed+');';
 	pg_connect_with_signature(conString, 'postForwardedMessages', s, pa, in_token, in_signature, null, res);
 	
 });
@@ -1054,6 +1126,22 @@ app.get('/wt/wt.gtw.getgroupmessages', function(req, res){
 // in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
  var s = 'SELECT wt.getgroupmessages('+in_user_id+','+in_group_id+',\''+in_query+'\','+in_limit+','+in_offset+');';
  pg_connect_with_signature(conString, 'getGroupmessages', s, pa, in_token, in_signature, in_user_id, res);
+});
+
+app.get('/wt/wt.gtw.postcomplete', function(req, res){
+ var in_user_id = req.query.in_user_id;
+ var in_compl_messages_id = req.query.in_compl_messages_id; 
+ var in_uncompl_messages_id = req.query.in_uncompl_messages_id;
+ var in_signature = req.query.in_signature;
+ var in_token = req.query.in_token; 
+ var pa = new Array();
+ var k = -1;
+ if (in_compl_messages_id!=undefined) { pa[++k] = {name: "in_compl_messages_id", value: in_compl_messages_id} } else {in_compl_messages_id=0};
+ if (in_uncompl_messages_id!=undefined) { pa[++k] = {name: "in_uncompl_messages_id", value: in_uncompl_messages_id} } else {in_uncompl_messages_id=0};
+ if (in_user_id!=undefined) { pa[++k] = {name: "in_user_id", value: in_user_id} } else {in_user_id=0};
+// in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
+ var s = 'SELECT wt.postcomplete('+in_user_id+','+in_compl_messages_id+','+in_uncompl_messages_id+');';
+ pg_connect_with_signature(conString, 'postComplete', s, pa, in_token, in_signature, in_user_id, res);
 });
 
 app.get('/wt/wt.gtw.postfavorites', function(req, res){
@@ -1592,7 +1680,7 @@ app.route('/wt/wt.document_api.upload')
     });	
 
 function result_process(proc, result, res){
-console.log('x='+JSON.stringify(result));
+//console.log('x='+JSON.stringify(result));
 if (proc=='postEmail'){
 	x = result.postemail;
 	if (x.success==1){
@@ -1610,12 +1698,12 @@ if (proc=='postEmail'){
 if (proc=='postCode') {
 	x = result.postcode;
 	if (x.success==1){
-	for (k=1;k<u.length;k++){
+	/*for (k=1;k<u.length;k++){
 		if (u[k].id==x.author[0].author_id){
 			u[k].slice(1);
 			break;
 		};
-	};
+	};*/
 	u[x.token]={'id':x.author[0].author_id,'secret':x.secret};
 	for (k=1;k<u.length;k++){
 		var user = u[i];
@@ -1638,12 +1726,12 @@ if (proc=='resetPassword') {
 // send mail
 		sendMail(x.email, x.mail_subject, x.mail_text); 
 // repack json 
-		for (k=1;k<u.length;k++){
+		/*for (k=1;k<u.length;k++){
 			if (u[k].id==x.author_id){
 				u[k].slice(1);
 				break;
 			};
-		};
+		};*/
 		u[x.token]={'id':x.author_id,'secret':x.secret};
 		for (k=1;k<u.length;k++){
 			var user = u[i];
@@ -1733,12 +1821,13 @@ if (proc=='getTemplates') {
 if (proc=='authenticate') {
 	x = result.authenticate;
 	if (x.success==1){
-	for (k=1;k<u.length;k++){
+	/*for (k=1;k<u.length;k++){
 		if (u[k].id==x.author[0].author_id){
 			u[k].slice(1);
 			break;
 		};
 	};
+	*/
 	u[x.token]={'id':x.author[0].author_id,'secret':x.secret};
 	for (k=1;k<u.length;k++){
 		var user = u[i];
@@ -1759,10 +1848,31 @@ if (proc=='myDraftmessages') {
 if (proc=='messageContent') {
 	x = result.messagecontent;
 	if (x.success==1) {
-		var file = x.path; 
+		
+		var file = x.parent_file; 
 		var path = __dirname + '/img/' + file;
-		log.info('file='+path);
-		return res.download(path);
+			log.info('file='+path);
+
+		if (x.key!=null){
+			encryptor.decryptFile(path+'.dec', path, x.key, function(err) {
+			    
+
+				var filestream = fs.createReadStream(path);
+				filestream.pipe(res);
+				fs.unlinkSync(path);
+				if ((x.com==1) && (x.doc==1)){
+					fs.unlinkSync(path);
+				};
+				return;
+			});
+		} else {
+				var filestream = fs.createReadStream(path);
+				filestream.pipe(res);
+				if ((x.com==1) && (x.doc==1)){
+					fs.unlinkSync(path);
+				};
+				return;
+		}
 	} else {
 		var y = { 	
 			success:x.success, 
@@ -1788,14 +1898,31 @@ if (proc=='getAvatar') {
 };
 if (proc=='postMessagesv2') {
 	x = result.postmessages;
+	if (x.com!=undefined) {
+		if ((x.com==1) && (x.doc==1)){
+			fs.unlinkSync(mainPath+publicDirectory+'/'+parent_file);
+		};
+	};
 	return res.send(x);
 };
 if (proc=='postMessagesv3') {
 	x = result.postmessages;
+	if (x.com!=undefined) {
+		if ((x.com==1) && (x.doc==1)){
+			fs.unlinkSync(mainPath+publicDirectory+'/'+parent_file);
+		};
+	};
 	return res.send(x);
 };
 if (proc=='postForwardedMessages') {
 	x = result.postmessages;
+	// copy filestream
+	var source = fs.createReadStream(mainPath+publicDirectory+'/'+x.source_file);
+	var dest = fs.createWriteStream(mainPath+publicDirectory+'/'+x.dest_file);
+	source.pipe(dest);
+	source.on('error', function(err) { /* error */
+		log.info(err);
+	});
 	return res.send(x);
 };
 if (proc=='postPersonalinfo') {
@@ -1839,11 +1966,20 @@ if (proc=='postFavorites'){
 	x = result.postfavorites;
 	return res.send(x);
 };
+if (proc=='postComplete'){
+	x = result.postcomplete;
+	if (x.com!=undefined) {
+		if ((x.com==1) && (x.doc==1)){
+			fs.unlinkSync(mainPath+publicDirectory+'/'+parent_file);
+		};
+	};
+	return res.send(x);
+};
 if (proc=='messageText'){
 	x = result.messagetext;
 	log.info('messagetext='+JSON.stringify(x));
 	if (x.error==1){
-	if ((x.message_text.length==0) && (x.message_text.indexOf('Error')=-1)) {
+	if (x.message_text.length==0) {
 	var result = '';
 			l_lang = 'rus-RUS';
 			if (x.lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
@@ -2023,6 +2159,6 @@ pg.connect(cs, function(err, client, done) {
 	
 
 
-app.listen(1337, function(){
+app.listen(process.argv[2], function(){
     console.log('Express server listening on port 1337');
 });
