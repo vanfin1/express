@@ -17,9 +17,15 @@ var path = require('path');     //used for file path
 var fs = require('fs-extra');       //File System - for file manipulation
 var pg = require('pg');
 var net = require('net');
+//var FormData = require('form-data');
+
 var ffmpeg = require('liquid-ffmpeg');
 var u = [];
+var ntfy = [];
+var request = require('request');
+var in_request;
 log.info('port='+config.get('port'));
+var httpreq = require('httpreq');
 var app = express();
 var conString = config.get('postgresConnection');
 var mainPath = config.get('mainPath')//'C:/Users/VGA/nodeapi/';
@@ -34,6 +40,11 @@ var publicDirectory = 'img';
 	var recognizingAppId = 'NMDPTRIAL_vanfin120120219013811';
 	var recognizingAppKey = '22936f2466829b67614bb0cc61b510f776dbadb59395facac8dce35e49d4f36c676290cee42b354577e511d89a22d010fd7dc69012c05ada9d3e39e6122c5279';
 	var recognizingContentType = 'audio/x-wav;codec=pcm;bit=16;rate=8000';
+	var proxySettings = 'http://vanfin:SomeInte09@cache.fors.ru:3128';
+	var API_ACCESS_KEY = 'AIzaSyDq5rRcFz2SqhWH8ftBc8_aJpm2MHwC8do';
+	var gcmURL = 'https://android.googleapis.com/gcm/send';
+	
+	var schedule = require('node-schedule');
 //this starts initializes a connection pool
 //it will keep idle connections open for a (configurable) 30 seconds
 //and set a limit of 20 (also configurable)
@@ -51,7 +62,12 @@ app.use(busboy());
     childProcess.spawn = mySpawn;
 })();
 
-
+if (config.get('host')=='10.2.3.118'){
+			in_request = request.defaults({proxy: proxySettings});
+		} else {
+			in_request = request;
+		};
+		
 //app.use(express.favicon()); // отдаем стандартную фавиконку, можем здесь же свою задать
 //app.use(morgan('combined')) // выводим все запросы со статусами в консоль
 app.use(bodyParser.json()); // стандартный модуль, для парсинга JSON в запросах
@@ -60,6 +76,7 @@ app.use(bodyParser.json()); // стандартный модуль, для парсинга JSON в запросах
 app.use(express.static(path.join(__dirname, "public"))); // запуск статического файлового сервера, который смотрит на папку public/ (в нашем случае отдает index.html)
 log.info('conString='+conString);
 pg_connect_get_users(conString);
+pg_connect_get_ntfy(conString);
 
 
 app.get('/api', function (req, res) {
@@ -86,9 +103,41 @@ pg.connect(cs, function(err, client, done) {
 				log.info('user.token='+user.token+' id='+user.id);
 				log.info('u.secret1111='+u[user.token].secret);
 			}
-		} else {
-			return res.json(x).send;
+		} 
+	});
+});
+}
+
+
+
+
+
+
+function pg_connect_get_ntfy(cs){
+pg.connect(cs, function(err, client, done) {
+	if(err) {
+		return console.error('error fetching client from pool - get users', err);
+	}
+	client.query('select wt.getfuturenotify();', function(err, result) {
+    //call `done()` to release the client back to the pool
+		done();
+		if(err) {
+			return console.error('error running query - get ntfy', err);
 		}
+		console.log(result.rows[0]);
+		var x = result.rows[0].getfuturenotify;
+		if (x.success == 1 && (x.messages)) {
+			for (var i=0;i<x.messages.length;i++) {
+				var message = x.messages[i];
+				var date = new Date(message.date_year, message.date_month-1, message.date_day, message.date_hour, message.date_minute, 0);
+				var now = new Date();
+				log.info('date-now='+(date-now)/1000/60/60/24);
+				ntfy['s'+message.message_id]= schedule.scheduleJob(date, function(){
+					sendPushNotifications(message.IOSdevice_ids, message.device_ids, message.is_control, message.text);
+				});
+				log.info('notify='+message.message_id+' id='+message.message_id+',date='+date.toString());
+			}
+		} 
 	});
 });
 }
@@ -99,7 +148,7 @@ function checkSignature2(paramarray, token, secret, signature, res){
 		s = s + "&" + paramarray[k].name + "=" + paramarray[k].value;
 	};
 	var current_signature = md5.hex_md5("secret_key="+secret+"&token="+token+s);
-	//log.info('s='+s);
+	log.info('s='+s);
 	//log.info('current_signature='+current_signature);
 	//log.info('signature='+signature);
 	if (current_signature!=signature) {
@@ -114,8 +163,8 @@ function checkSignature2(paramarray, token, secret, signature, res){
 
 function pg_connect_with_signature(cs, proc, select_string, pa, token, signature, user_id, res) {
 	var x = u[token];
-	//log.info('proc='+proc);
-	//log.info('token='+token);
+	log.info('proc='+proc);
+	log.info('select_string='+select_string);
 	if (x != undefined) {
 		log.info('x='+x.id);
 		if (checkSignature2(pa, token, x.secret.trim(), signature, res)==1) {
@@ -131,7 +180,7 @@ function pg_connect_with_signature(cs, proc, select_string, pa, token, signature
     //call `done()` to release the client back to the pool
 				done();
 				if(err) {return console.error('error running query', err);}
-			//	console.log(result.rows[0]);
+				console.log(result.rows[0]);
 				var x1 = result.rows[0].gettoken2;
 				if (x1.success == 1) {
 					u[x1.token]={'id':x1.user_id,'secret':x1.secret};
@@ -156,6 +205,57 @@ function pg_connect_with_signature(cs, proc, select_string, pa, token, signature
 		
 	}
 }
+
+function sendPushNotifications(ios_device_ids, device_ids, is_control, text) {
+	log.info('Start push'+device_ids);
+    if (is_control==1) {
+		l_vibrate = 1;
+		l_sound = 1;
+		l_title = 'New task';
+		l_message = 'New task';
+	} else {
+		l_vibrate = 0;
+		l_sound = 0;
+		l_title = 'New notice';
+		l_message = 'New notice';
+	};
+	if (text){
+		l_message = l_message + ': ' + text; 
+	};
+	
+    var data = 	{ 'notification': {
+			'message':l_message,
+			'title':l_title,
+			'vibrate':l_vibrate,
+			'sound':l_sound
+			},
+			'registration_ids' : device_ids
+		};
+	
+	    in_request({
+			url: gcmURL, //URL to hit
+			method: 'POST',
+			headers: {
+				'Authorization': 'key='+API_ACCESS_KEY,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify(data) //Set the body as a string
+		}, function(error, response, body){
+		   log.info('Get response');
+		   if(error){log.info('error:'+error.message)};
+		   log.info('response:'+response+':'+body);
+		});
+	
+	
+	
+
+
+};
+
+function checkHandlers(in_message_id, res) {
+  var s = 'SELECT wt.handlerwork(\''+in_message_id+'\');';
+  pg_connect (conString, 'handlerwork', s, res);
+};
 
 
 
@@ -342,7 +442,7 @@ app.get('/wt/wt.gtw.postfollowings', function(req, res){
  if (in_follow_id==0){
  pa[0] = {name: "in_author_id", value: in_author_id};
  pa[1] = {name: "in_user_id", value: in_user_id};
- in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
+ //in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
  var s = 'SELECT wt.postfollowings('+in_user_id+','+in_author_id+');';
  } else {
  pa[0] = {name: "in_author_id", value: in_author_id};
@@ -509,9 +609,21 @@ app.get('/wt/wt.gtw.getTemplates', function(req, res){
 app.get('/wt/wt.gtw.authenticate', function(req, res){
  var in_email = req.query.in_email;
  var in_password = req.query.in_password;
+
  log.info(in_password);
  var s = 'SELECT wt.authenticate(\''+in_email+'\',\''+in_password+'\');';
  pg_connect (conString, 'authenticate', s, res);
+});
+
+app.get('/wt/wt.gtw.registerNotification', function(req, res){
+ var token = req.query.token;
+ var in_device_id = req.query.in_device_id;
+ var in_IOS = req.query.in_IOS;
+ if (in_IOS==undefined){in_IOS = 0}; 
+ //log.info(in_password);
+ var s = 'SELECT wt.registernotification(\''+token+'\',\''+in_device_id+'\','+in_IOS+');';
+ log.info('s='+s);
+ pg_connect (conString, 'registernotification', s, res);
 });
 
 app.get('/wt/wt.gtw.mymessages', function(req, res){
@@ -601,6 +713,7 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
  var in_version = req.query.in_version; 
  var in_lang = req.query.in_lang;
  var in_draft = req.query.in_draft;
+ var in_control = req.query.in_control;
  
  var pa = new Array();
  if (in_version=='v2'){
@@ -608,6 +721,7 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	if (in_acl!=undefined) { pa[++k] = {name: "in_acl", value: in_acl} } else {in_acl=''};
 	if (in_author_comment!=undefined) { pa[++k] = {name: "in_author_comment", value: in_author_comment} } else {in_author_comment=''};
 	if (in_completed_method!=undefined) { pa[++k] = {name: "in_completed_method", value: in_completed_method} } else {in_completed_method=0};
+	if (in_control!=undefined) { pa[++k] = {name: "in_control", value: in_control} } else {in_control=0};
 	if (in_delete_on_completed!=undefined) { pa[++k] = {name: "in_delete_on_completed", value: in_delete_on_completed} } else {in_delete_on_completed=0};	
 	if (in_delivery_date!=undefined) { pa[++k] = {name: "in_delivery_date", value: in_delivery_date} } else {in_delivery_date=''};
 	if (in_direct_msg!=undefined) { pa[++k] = {name: "in_direct_msg", value: in_direct_msg} } else {in_direct_msg=''};
@@ -649,7 +763,7 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 				};
 					var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''
 				+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''
-				+in_end_date+'\',\''+in_length+'\',\'\',0,\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
+				+in_end_date+'\',\''+in_length+'\',\'\',0,\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+','+in_control+');';
 					pg_connect_with_signature(conString, 'postMessagesv2', s, pa, in_token, in_signature, null, res);
   // Encryption complete.
                 
@@ -666,13 +780,14 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 		destFile = mainPath+publicDirectory+'/'+in_file_after;
 		encFile = mainPath+publicDirectory+'/'+in_file_after+'.dec';
 				var in_key = md5.hex_md5(in_token+in_file_after); 	
+				in_key='';
 				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
 				if (!err) {
-					fs.unlinkSync(destFile);
+				//	fs.unlinkSync(destFile);
 				};
 				var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+
 				'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+
-				in_length+'\',\'\',0,\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
+				in_length+'\',\'\',0,\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+','+in_control+');';
 				pg_connect_with_signature(conString, 'postMessagesv2', s, pa, in_token, in_signature, null, res);
 					
   // Encryption complete.
@@ -706,6 +821,7 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	if (in_acl!=undefined) { pa[++k] = {name: "in_acl", value: in_acl} } else {in_acl=''};
 	if (in_author_comment!=undefined) { pa[++k] = {name: "in_author_comment", value: in_author_comment} } else {in_author_comment=''};
 	if (in_completed_method!=undefined) { pa[++k] = {name: "in_completed_method", value: in_completed_method} } else {in_completed_method=0};
+	if (in_control!=undefined) { pa[++k] = {name: "in_control", value: in_control} } else {in_control=0};
 	if (in_delete_on_completed!=undefined) { pa[++k] = {name: "in_delete_on_completed", value: in_delete_on_completed} } else {in_delete_on_completed=0};	
 	if (in_delivery_date!=undefined) { pa[++k] = {name: "in_delivery_date", value: in_delivery_date} } else {in_delivery_date=''};
 	if (in_direct_msg!=undefined) { pa[++k] = {name: "in_direct_msg", value: in_direct_msg} } else {in_direct_msg=''};
@@ -725,8 +841,28 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	
 //	in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
 
+var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''
+					+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date
+					+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\'##RESULT##\','+in_draft+',\''
+					+in_due_date+'\',\'##INKEY##\','+in_completed_method+','+in_delete_on_completed+','+in_control+');';
+	/*if (config.get('host')=='10.2.3.118'){
+		var in_request = request.defaults({proxy: proxySettings});
+	} else {
+		var in_request = request;
+	};				
+*/
+	
+
+	
+	
+	
+	
+	
 	if (in_file.indexOf('.wav')==-1) {
     
+
+
+	
 	in_file_after = in_file + storageFormat;
 	in_file_wav = in_file_after + recognizingFormat;
 	sourceFile = mainPath+publicDirectory+'/'+in_file;
@@ -734,8 +870,9 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	tempFile = mainPath+in_file_after;
 	tempFileWav = mainPath+in_file_wav;
 	encFile = mainPath+publicDirectory+'/'+in_file_after+'.dec';
-
-	var proc = new ffmpeg({ source:  sourceFile}).withAudioBitrate(storageAudioBitrate).withAudioFrequency(storageAudioFrequency).addOption('-hide_banner', '-y').saveToFile(in_file_after, 
+	
+	var proc = new ffmpeg({ source:  sourceFile}).withAudioBitrate(storageAudioBitrate)
+	.withAudioFrequency(storageAudioFrequency).addOption('-hide_banner', '-y').saveToFile(in_file_after, 
 	function(stdout, stderr) {
         fs.unlinkSync(sourceFile);
 		var source = fs.createReadStream(tempFile);
@@ -743,72 +880,24 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 		
 		source.pipe(dest);
 		source.on('end', function() {
-			fs.unlinkSync(tempFile);
-			var result = '';
-			l_lang = 'rus-RUS';
-			if (in_lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
-			if (in_lang.toUpperCase() == 'CN') {l_lang = 'yue-CHN'};
-			if (in_lang.toUpperCase() == 'DE') {l_lang = 'deu-DEU'};
-    		
-			
-			var proc = new ffmpeg({ source: destFile }).withAudioBitrate(recognizingAudioBitrate).withAudioFrequency(recognizingAudioFrequency)
-			.withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
-			function(stdout, stderr) {
-			var request = require('request');
-				request({
-				url: recognizingURL, //URL to hit
-				qs: {appId: recognizingAppId, appKey: recognizingAppKey}, //Query string data
-				method: 'POST',
-				headers: {
-					'Content-Type': recognizingContentType,
-					'Accept': 'text/plain',
-					'Accept-Language': l_lang,
-					'Accept-Topic': 'Dictation',
-					'X-Dictation-NBestListSize': '1'
-				},
-				body: fs.readFileSync(tempFileWav) //Set the body as a string
-			}, function(error, response, body){
-				fs.unlinkSync(tempFileWav);
-				if(error) {
-					console.log(error);
-					result=error;
-				} else {
-					console.log(response.statusCode, body);
-					result = body;
-					if (response.statusCode>399 && response.statusCode<500) {
-						result = 'Request Error '+response.statusCode+': bad request';
-					};
-					if (response.statusCode>499) {
-						result = 'Server Error:'+response.statusCode+' unable to process request';
-					};
-				}
-				var in_key = md5.hex_md5(in_token+in_file_after); 	
-				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
-				if (!err) {
-					fs.unlinkSync(destFile);
-				};
-					var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''
-					+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','
-					+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+result+'\','+in_draft+',\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
-				pg_connect_with_signature(conString, 'postMessagesv3', s, pa, in_token, in_signature, null, res);
 		
-  // Encryption complete.
-                
-				});
-				});
-			})
+		fs.unlinkSync(tempFile);
 
-
-
-			
+		recognize_on_creation(sourceFile, in_file_after, tempFile, destFile, in_file_wav, tempFileWav, encFile, in_lang, s, pa, in_token, in_signature, res);
+		
 		});
 		source.on('error', function(err) { /* error */
 			log.info(err);
 		});
 		
-	})}
+	})
+	}
 	else
 	{
+	
+	
+					
+	
 		in_file_after = in_file ;
 	in_file_wav = in_file_after + recognizingFormat;
 	sourceFile = mainPath+publicDirectory+'/'+in_file;
@@ -817,6 +906,9 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 	tempFileWav = mainPath+in_file_wav;
 	encFile = mainPath+publicDirectory+'/'+in_file_after+'.dec';
 	
+		recognize_on_creation(sourceFile, in_file_after, tempFile, destFile, in_file_wav, tempFileWav, encFile, in_lang, s, pa, in_token, in_signature, res);
+		
+/*	
 			var result = '';
 			l_lang = 'rus-RUS';
 			if (in_lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
@@ -824,10 +916,10 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 			if (in_lang.toUpperCase() == 'DE') {l_lang = 'deu-DEU'};
     		
 			
-			var proc = new ffmpeg({ source: destFile }).withAudioBitrate(recognizingAudioBitrate).withAudioFrequency(recognizingAudioFrequency).withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
+			var proc = new ffmpeg({ source: destFile }).withAudioBitrate(recognizingAudioBitrate)
+			.withAudioFrequency(recognizingAudioFrequency).withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
 			function(stdout, stderr) {
-			var request = require('request');
-				request({
+				in_request({
 				url: recognizingURL, //URL to hit
 				qs: {appId: recognizingAppId, appKey: recognizingAppKey}, //Query string data
 				method: 'POST',
@@ -857,9 +949,8 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 				var in_key = md5.hex_md5(in_token+in_file_after); 	
 				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
 					if (!err) {fs.unlinkSync(destFile);};
-					var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''
-					+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date
-					+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+result+'\','+in_draft+',\''+in_due_date+'\',\''+in_key+'\','+in_completed_method+','+in_delete_on_completed+');';
+					s = s.replace('##RESULT##',result);
+					s = s.replace('##INKEY##',in_key);
 					pg_connect_with_signature(conString, 'postMessagesv3', s, pa, in_token, in_signature, null, res);
 		
   // Encryption complete.
@@ -869,61 +960,75 @@ app.get('/wt/wt.gtw.postmessages', function(req, res){
 		
 				});
 			})
-
+*/
 	}
-	/*
-	post_data = in_file_after + 'START11223344' + in_file_after;
-	var client = net.connect({port: 9092 , host:'localhost'},function() { //'connect' listener
-		console.log('Start conversion!');
-		client.write(post_data);
-	});
-	client.on('data', function(data) {
-		log.info(data.toString());
-		client.end();
-	});
-	client.on('end', function() {
-	    	log.info('End conversion');
+
+
+ };
+ });	
+ 
+function recognize_on_creation(sourceFile, in_file_after, tempFile, destFile, in_file_wav, tempFileWav, encFile, in_lang, s, pa, in_token, in_signature, res){
+	
+	
+			
 			var result = '';
 			l_lang = 'rus-RUS';
 			if (in_lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
 			if (in_lang.toUpperCase() == 'CN') {l_lang = 'yue-CHN'};
 			if (in_lang.toUpperCase() == 'DE') {l_lang = 'deu-DEU'};
     		
-			post_data2 = in_file_after + 'START11223344' + in_file_after + '.wav' + 'START11223344' + l_lang;
-			var client2 = net.connect({port: 9090 , host:'localhost'},function() { //'connect' listener
-				console.log('Start nuance!');
-				client2.write(post_data2);
-				
-				
-			});
-			client2.on('data', function(data) {
-				log.info(data.toString());
-				p_file = in_file_after + '.wav';
-				l_pos =   data.toString().search(p_file);
-				if (l_pos > 0) {
-				    result = data.toString().substr(l_pos+p_file.length).replace('C:\Python27>echo off','').trim(); 
+			
+			var proc = new ffmpeg({ source: destFile }).withAudioBitrate(recognizingAudioBitrate).withAudioFrequency(recognizingAudioFrequency)
+			.withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
+			function(stdout, stderr) {
+				in_request({
+				url: recognizingURL, //URL to hit
+				qs: {appId: recognizingAppId, appKey: recognizingAppKey}, //Query string data
+				method: 'POST',
+				headers: {
+					'Content-Type': recognizingContentType,
+					'Accept': 'text/plain',
+					'Accept-Language': l_lang,
+					'Accept-Topic': 'Dictation',
+					'X-Dictation-NBestListSize': '1'
+				},
+				body: fs.readFileSync(tempFileWav) //Set the body as a string
+			}, function(error, response, body){
+				fs.unlinkSync(tempFileWav);
+				if(error) {
+					console.log(error);
+					result=error;
+				} else {
+					console.log(response.statusCode, body);
+					result = body;
+					if (response.statusCode>399 && response.statusCode<500) {
+						result = 'Request Error '+response.statusCode+': bad request';
+					};
+					if (response.statusCode>499) {
+						result = 'Server Error:'+response.statusCode+' unable to process request';
+					};
+				}
+				var in_key = md5.hex_md5(in_token+in_file_after); 	
+				encryptor.encryptFile(destFile, encFile, in_key, function(err) {
+				if (!err) {
+				//	fs.unlinkSync(destFile);
 				};
-				if (result.toUpperCase().search('ERROR') > 0) {
-					result = 'Recognition Error';
-				};
-				
-				client2.end();
-			});
-			client2.on('end', function() {
-				log.info('End nuance');
-				var s = 'SELECT wt.postmessages(0,'+in_user_id+',\''+in_file_after+'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+result+'\','+in_draft+',\''+in_due_date+'\');';
+				s = s.replace('##RESULT##',result);
+				s = s.replace('##INKEY##',in_key);
 				pg_connect_with_signature(conString, 'postMessagesv3', s, pa, in_token, in_signature, null, res);
 		
-			});
-		
-	});
-	
-	*/
+  // Encryption complete.
+                
+				});
+				});
+			})
 
- };
- });	
- 
- 
+
+
+			
+		
+	
+} 
 
 
 app.get('/wt/wt.gtw.postForwardedMessages', function(req, res){
@@ -931,6 +1036,7 @@ app.get('/wt/wt.gtw.postForwardedMessages', function(req, res){
  var in_message_id = req.query.in_message_id;
  var in_author_comment = req.query.in_author_comment;
  var in_completed_method = req.query.in_completed_method;
+ var in_control = req.query.in_control;
  var in_delete_on_completed = req.query.in_delete_on_completed; 
  var in_delivery_date = req.query.in_delivery_date;
  var in_direct_msg = req.query.in_direct_msg;
@@ -951,6 +1057,7 @@ app.get('/wt/wt.gtw.postForwardedMessages', function(req, res){
 	if (in_acl!=undefined) { pa[++k] = {name: "in_acl", value: in_acl} } else {in_acl=''};
 	if (in_author_comment!=undefined) { pa[++k] = {name: "in_author_comment", value: in_author_comment} } else {in_author_comment=''};
 	if (in_completed_method!=undefined) { pa[++k] = {name: "in_completed_method", value: in_completed_method} } else {in_completed_method=0};
+	if (in_control!=undefined) { pa[++k] = {name: "in_control", value: in_control} } else {in_control=0};
 	if (in_delete_on_completed!=undefined) { pa[++k] = {name: "in_delete_on_completed", value: in_delete_on_completed} } else {in_delete_on_completed=0};	
 	if (in_delivery_date!=undefined) { pa[++k] = {name: "in_delivery_date", value: in_delivery_date} } else {in_delivery_date=''};
 	if (in_direct_msg!=undefined) { pa[++k] = {name: "in_direct_msg", value: in_direct_msg} } else {in_direct_msg=''};
@@ -965,7 +1072,7 @@ app.get('/wt/wt.gtw.postForwardedMessages', function(req, res){
 	if (in_user_id!=undefined) { pa[++k] = {name: "in_user_id", value: in_user_id} } else {in_user_id=''};
 	if (in_wait_reply!=undefined) { pa[++k] = {name: "in_wait_reply", value: in_wait_reply} } else {in_wait_reply=0};
 //	in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
-	var s = 'SELECT wt.postmessages('+in_message_id+','+in_user_id+',\'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+in_text+'\',0,\''+in_due_date+'\',\'\','+in_completed_method+','+in_delete_on_completed+');';
+	var s = 'SELECT wt.postmessages('+in_message_id+','+in_user_id+',\'\',\''+in_author_comment+'\',\''+in_tags+'\',\''+in_acl+'\',\''+in_direct_msg+'\','+in_parent_id+','+in_wait_reply+',\''+in_delivery_date+'\','+in_prev_mess_id+',\''+in_end_date+'\',\''+in_length+'\',\''+in_text+'\',0,\''+in_due_date+'\',\'\','+in_completed_method+','+in_delete_on_completed+','+in_control+');';
 	pg_connect_with_signature(conString, 'postForwardedMessages', s, pa, in_token, in_signature, null, res);
 	
 });
@@ -999,8 +1106,8 @@ app.get('/wt/wt.gtw.postpersonalinfo', function(req, res){
 	if (in_phone_number!=undefined) { pa[++k] = {name: "in_phone_number", value: in_phone_number} } else {in_phone_number=''};
 	if (in_privacy!=undefined) { pa[++k] = {name: "in_privacy", value: in_privacy} } else {in_privacy=0};
 	if (in_status!=undefined) { pa[++k] = {name: "in_status", value: in_status} } else {in_status=''};
-	if (in_username!=undefined) { pa[++k] = {name: "in_username", value: in_username} } else {in_username=''};
 	if (in_user_id!=undefined) { pa[++k] = {name: "in_user_id", value: in_user_id} } else {in_user_id=''};
+	if (in_username!=undefined) { pa[++k] = {name: "in_username", value: in_username} } else {in_username=''};
 //	in_signature = createSignature(pa, in_token, '8tUeJ7fNgKDjwdoXmA8i');
 	var s = 'SELECT wt.postpersonalinfo('+in_user_id+',\''+in_first_name+'\',\''+in_last_name+'\',\''+in_email+'\',\''+in_phone_number+'\',\''+in_username+'\',\''+in_password+'\',\''+in_avatar+'\',\''+in_about+'\','+in_privacy+',\''+in_status+'\');';
 	pg_connect_with_signature(conString, 'postPersonalinfo', s, pa, in_token, in_signature, null, res);
@@ -1262,7 +1369,7 @@ app.get('/wt/wt.gtw.getblacklist', function(req, res){
  pg_connect_with_signature(conString, 'getBlacklist', s, pa, in_token, in_signature, in_user_id, res);
 }); 
 
-app.get('/wt/wt.gtw.emailmessage', function(req, res){
+app.get('/wt/wt.gtw.emailmessages', function(req, res){
  var in_user_id = req.query.in_user_id;
  var in_message_id = req.query.in_message_id;
  var in_signature = req.query.in_signature;
@@ -1416,6 +1523,97 @@ function sendMail(to, subject, body){
     }
 });
 
+}
+//[{'filename': file,'contents':data}]
+
+function sendMailInner(transporter, to, subject, body, attachments, path, key){
+		var mailOptions = {
+						from: 'vanfin <vanfin1@gmail.com>', // sender address
+						to: to, // list of receivers
+						subject: subject, // Subject line
+						text: body, // plaintext body
+						attachments : attachments
+					};
+// send mail with defined transport object
+					transporter.sendMail(mailOptions, function(error, info){
+						if(error){
+							log.error('Internal error(%d): %s',res.statusCode,err.message);
+//            return res.send({ error: 'Server error' });
+						}else{
+							log.info('Message sent');
+//        return res.send( 'Message sent' );
+						}
+						if (key) {
+							try {
+							fs.unlinkSync(path)
+							} catch (e) {
+								log.info('error del file:'+path);
+							};
+						};
+						return;
+					})
+}
+
+function sendMailWithAttachments(to, subject, body, key, file){
+    var transporter = nodemailer.createTransport({
+    service: 'Gmail',
+    auth: {
+        user: 'vanfin1',
+        pass: 'SomeInte01'
+    }
+    });
+		var path = __dirname + '/img/' + file;
+		if (file!=undefined){
+			if (key!=null){
+				encryptor.decryptFile(path+'.dec', path, key, function(err) {
+					fs.readFile(path, function (err, data) {
+// setup e-mail data with unicode symbols
+						var attachments = [{'filename': file,'content':data}];
+						sendMailInner(transporter, to, subject, body, attachments, path, key);			
+					});
+				})	
+			} else {
+				fs.readFile(path, function (err, data) {
+					var attachments = [{'filename': file,'content':data}];
+					sendMailInner(transporter, to, subject, body, attachments, path, key);	
+				});
+			}
+		}
+// NB! No need to recreate the transporter object. You can use
+// the same transporter object for all e-mails
+}
+
+function sendMailWith2Attachments(to, subject, body, key, file, attach2, attach2name){
+    var transporter = nodemailer.createTransport({
+    service: 'Gmail',
+    auth: {
+        user: 'vanfin1',
+        pass: 'SomeInte01'
+    }
+    });
+	log.info('Message prepear sent');
+		var path = __dirname + '/img/' + file;
+		if (file!=undefined){
+			if (key!=null){
+				encryptor.decryptFile(path+'.dec', path, key, function(err) {
+					fs.readFile(path, function (err, data) {
+// setup e-mail data with unicode symbols
+						//log.info('data='+data);
+						//log.info('attach2='+attach2);
+						
+						attachments = [{'filename': file,'content':data}, {'filename': attach2name,'content':attach2}];
+						sendMailInner(transporter, to, subject, body, attachments, path, key);			
+					});
+				})	
+			} else {
+				fs.readFile(path, function (err, data) {
+					attachments = [{'filename': file,'content':data}, {'filename': attach2name,'content':attach2}];
+					sendMailInner(transporter, to, subject, body, attachments, path, key);	
+				});
+			}
+		}
+// NB! No need to recreate the transporter object. You can use
+// the same transporter object for all e-mails
 }
 
 
@@ -1678,9 +1876,93 @@ app.route('/wt/wt.document_api.upload')
             });
         });
     });	
+	
+function recognize(x, in_path, in_request, res) {
+	var result = '';
+	l_lang = 'rus-RUS';
+	if (x.lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
+	if (x.lang.toUpperCase() == 'CN') {l_lang = 'yue-CHN'};
+	if (x.lang.toUpperCase() == 'DE') {l_lang = 'deu-DEU'};
+			
+	in_file_wav = x.file + recognizingFormat;
+	tempFileWav = mainPath+in_file_wav;
+			
+	var proc = new ffmpeg({ source: in_path }).withAudioBitrate(recognizingAudioBitrate)
+	.withAudioFrequency(recognizingAudioFrequency).withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
+	function(stdout, stderr) {
+		
+		in_request({
+			url: recognizingURL, //URL to hit
+			qs: {appId: recognizingAppId, appKey: recognizingAppKey}, //Query string data
+			method: 'POST',
+			headers: {
+				'Content-Type': recognizingContentType,
+				'Accept': 'text/plain',
+				'Accept-Language': l_lang,
+				'Accept-Topic': 'Dictation',
+				'X-Dictation-NBestListSize': '1'
+			},
+			body: fs.readFileSync(tempFileWav) //Set the body as a string
+		}, function(error, response, body){
+			fs.unlinkSync(tempFileWav);
+			if(error) {
+				console.log(error);
+				result=error;
+			} else {
+				console.log(response.statusCode, body);
+				result = body;
+				if (response.statusCode>399 && response.statusCode<500) {
+					result = 'Request Error '+response.statusCode+': bad request';
+				};
+				if (response.statusCode>499) {
+					result = 'Server Error:'+response.statusCode+' unable to process request';
+				};
+			}
+			console.log('modifyY');
+			if (x.key!=null) {fs.unlinkSync(in_path)};
+			return sendTripleJSON(res, x.success, result, result)
+			});
+		})
+	
+}
+	
+	
+function doneFileDownload(filePath, res, key, com, doc){
+	log.info('doneFileDownload');
+	
+	log.info('x.key='+key);
+	log.info('filePath='+filePath);
+	
+    	var filestream = fs.createReadStream(filePath);
+		filestream.pipe(res);
+		if (key!=null){fs.unlinkSync(filePath);}
+		if ((com==1) && (doc==1)){
+			fs.unlinkSync(filePath+'.dec');
+		};
+		return;
+};
+
+function sendSimpleJSON(res, success_digit, e_text){
+	var y = { 	
+		success:success_digit, 
+		error_text: e_text
+	};
+	return res.json(y).send;
+};	
+
+function sendTripleJSON(res, success_digit, e_text, m_text){
+	var y = { 	
+		success:success_digit, 
+		error_text: e_text,
+		message_text: m_text
+	};
+	return res.json(y).send;
+};	
 
 function result_process(proc, result, res){
-//console.log('x='+JSON.stringify(result));
+if (proc!='mymessages' && proc!='getAvatar' && proc!='getFriends'){
+console.log('x='+JSON.stringify(result));
+}
 if (proc=='postEmail'){
 	x = result.postemail;
 	if (x.success==1){
@@ -1755,7 +2037,7 @@ if (proc=='resetPassword2') {
 		success:x.success, 
 		error_text: x.error_text
 	};
-	return res.send('<h1>WorldTalk password successfully changed</h1><p>A letter containing new password has been sent to email address ' +x.email+ '.</p><br> <h1>Пароль WorldTalk успешно изменен</h1><p>На адрес электронной почты ' +x.email+  ' было выслано письмо с новым паролем.</p>');
+	return res.send('<h2>WorldTalk password successfully changed</h2><p>A letter containing new password has been sent to email address ' +x.email+ '.</p>');
 };
 if (proc=='searchPeople') {
 	x = result.searchpeople;
@@ -1837,6 +2119,11 @@ if (proc=='authenticate') {
 	
 	return res.send(x);
 };
+if (proc=='registernotification') {
+	x = result.registernotification;
+	return res.send(x);
+};
+
 if (proc=='mymessages') {
 	x = result.mymessages;
 	return res.send(x);
@@ -1845,33 +2132,53 @@ if (proc=='myDraftmessages') {
 	x = result.mydraftmessages;
 	return res.send(x);
 };
+
+if (proc=='messageContent') {
+	x = result.messagecontent;
+	if (x.success==1) {
+		
+		var file = x.parent_file; 
+		filePath = __dirname + '/img/' + file;
+		log.info('file='+filePath);
+		if (filePath!=undefined){
+			if (x.key!=null){
+				encryptor.decryptFile(filePath+'.dec', filePath, x.key, function(err){
+					if (err) { return sendSimpleJSON(res, 0, 'EncryptionError');} 
+					else { return doneFileDownload(filePath, res, x.key, x.com, x.doc);}
+				});
+			} else {
+				return doneFileDownload(filePath, res, x.key, x.com, x.doc);
+			}
+		}
+	} else { return sendSimpleJSON(res, x.success, x.error_text) }
+};
+/*
 if (proc=='messageContent') {
 	x = result.messagecontent;
 	if (x.success==1) {
 		
 		var file = x.parent_file; 
 		var path = __dirname + '/img/' + file;
-			log.info('file='+path);
-
-		if (x.key!=null){
-			encryptor.decryptFile(path+'.dec', path, x.key, function(err) {
-			    
-
+		log.info('file='+path);
+		if (path!=undefined){
+			if (x.key!=null){
+				encryptor.decryptFile(path+'.dec', path, x.key, function(err) {
+					var filestream = fs.createReadStream(path);
+					filestream.pipe(res);
+					fs.unlinkSync(path);
+					if ((x.com==1) && (x.doc==1)){
+						fs.unlinkSync(path+'.dec');
+					};
+					return;
+				});
+			} else {
 				var filestream = fs.createReadStream(path);
 				filestream.pipe(res);
-				fs.unlinkSync(path);
 				if ((x.com==1) && (x.doc==1)){
 					fs.unlinkSync(path);
 				};
 				return;
-			});
-		} else {
-				var filestream = fs.createReadStream(path);
-				filestream.pipe(res);
-				if ((x.com==1) && (x.doc==1)){
-					fs.unlinkSync(path);
-				};
-				return;
+			}
 		}
 	} else {
 		var y = { 	
@@ -1881,6 +2188,8 @@ if (proc=='messageContent') {
 		return res.json(y).send;
 	}
 };
+*/
+
 if (proc=='getAvatar') {
 	x = result.get_avatar;
 	if (x.success==1) {
@@ -1888,41 +2197,82 @@ if (proc=='getAvatar') {
 		var path = __dirname + '/img/' + file;
 		log.info('file='+file);
 		return res.download(path);
-	} else {
-		var y = { 	
-			success:x.success, 
-			error_text: x.error_text
-		};
-		return res.json(y).send;
-	}
+	} else { return sendSimpleJSON(res, x.success, x.error_text)}
 };
 if (proc=='postMessagesv2') {
 	x = result.postmessages;
+	if (x.success==1){
 	if (x.com!=undefined) {
 		if ((x.com==1) && (x.doc==1)){
-			fs.unlinkSync(mainPath+publicDirectory+'/'+parent_file);
+			fs.unlinkSync(mainPath+publicDirectory+'/'+x.parent_file);
 		};
+		
+	};
+	
+	if (x.delay==0) {
+		sendPushNotifications(x.IOSdevices, x.devices, x.control, x.comment);
+	} else {
+	    var c = x;
+		var date = new Date(x.date_year, x.date_month-1, x.date_day, x.date_hour, x.date_minute, 0);
+		log.info('Start push with delay1 on date='+date);
+		ntfy['s'+x.new_message_id] = schedule.scheduleJob(date, function(){
+			//log.info('Start push with delay2');
+			sendPushNotifications(c.IOSdevices, c.devices, c.control, c.comment);
+		});
+	}
+	checkHandlers(x.new_message_id, res);
 	};
 	return res.send(x);
 };
 if (proc=='postMessagesv3') {
 	x = result.postmessages;
+	if (x.success==1){
 	if (x.com!=undefined) {
 		if ((x.com==1) && (x.doc==1)){
-			fs.unlinkSync(mainPath+publicDirectory+'/'+parent_file);
+			fs.unlinkSync(mainPath+publicDirectory+'/'+x.parent_file);
 		};
+	};
+	
+	if (x.delay==0) {
+		sendPushNotifications(x.IOSdevices, x.devices, x.control, x.comment);
+	} else {
+	    var c = x;
+		var date = new Date(x.date_year, x.date_month-1, x.date_day, x.date_hour, x.date_minute, 0);
+		log.info('Start push with delay1 on date='+date);
+		ntfy['s'+x.new_message_id] = schedule.scheduleJob(date, function(){
+			//log.info('Start push with delay2');
+			sendPushNotifications(c.IOSdevices, c.devices, c.control, c.comment);
+		});	
+	}
+	checkHandlers(x.new_message_id, res);
 	};
 	return res.send(x);
 };
 if (proc=='postForwardedMessages') {
 	x = result.postmessages;
 	// copy filestream
+	if (x.success==1){
 	var source = fs.createReadStream(mainPath+publicDirectory+'/'+x.source_file);
 	var dest = fs.createWriteStream(mainPath+publicDirectory+'/'+x.dest_file);
 	source.pipe(dest);
 	source.on('error', function(err) { /* error */
 		log.info(err);
 	});
+	
+	if (x.delay==0) {
+		sendPushNotifications(x.IOSdevices, x.devices, x.control, x.comment);
+	} else {
+	    var c = x
+		var date = new Date(x.date_year, x.date_month-1, x.date_day, x.date_hour, x.date_minute, 0);
+		log.info('Start push with delay1 on date='+date);
+		log.info('x.devices='+x.devices);
+		ntfy['s'+x.new_message_id] = schedule.scheduleJob(date, function(){
+			//log.info('Start push with delay2');
+			sendPushNotifications(c.IOSdevices, c.devices, c.control, c.comment);
+		});
+	}
+	checkHandlers(x.new_message_id, res);
+	};
 	return res.send(x);
 };
 if (proc=='postPersonalinfo') {
@@ -1975,100 +2325,86 @@ if (proc=='postComplete'){
 	};
 	return res.send(x);
 };
+
+
+
+
 if (proc=='messageText'){
 	x = result.messagetext;
 	log.info('messagetext='+JSON.stringify(x));
-	if (x.error==1){
-	if (x.message_text.length==0) {
-	var result = '';
-			l_lang = 'rus-RUS';
-			if (x.lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
-			if (x.lang.toUpperCase() == 'CN') {l_lang = 'yue-CHN'};
-			if (x.lang.toUpperCase() == 'DE') {l_lang = 'deu-DEU'};
-			
-			
-			in_file_wav = x.file + recognizingFormat;
-			destFile = mainPath+publicDirectory+'/'+x.file;
-			tempFileWav = mainPath+in_file_wav;
-			
-			var proc = new ffmpeg({ source: destFile }).withAudioBitrate(recognizingAudioBitrate).withAudioFrequency(recognizingAudioFrequency).withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
-			function(stdout, stderr) {
-			var request = require('request');
-				request({
-				url: recognizingURL, //URL to hit
-				qs: {appId: recognizingAppId, appKey: recognizingAppKey}, //Query string data
-				method: 'POST',
-				headers: {
-					'Content-Type': recognizingContentType,
-					'Accept': 'text/plain',
-					'Accept-Language': l_lang,
-					'Accept-Topic': 'Dictation',
-					'X-Dictation-NBestListSize': '1'
-				},
-				body: fs.readFileSync(tempFileWav) //Set the body as a string
-			}, function(error, response, body){
-				fs.unlinkSync(tempFileWav);
-				if(error) {
-					console.log(error);
-					result=error;
+	log.info('x.message_text.length='+x.message_text.length);
+	if (x.success==1){
+		if (x.message_text.length==0) {
+			var file = x.file; 
+			var path = __dirname + '/img/' + file;
+			log.info('file='+path);
+			if (path!=undefined){
+				if (config.get('host')=='10.2.3.118'){
+					var request1 = request.defaults({proxy: proxySettings});
 				} else {
-					console.log(response.statusCode, body);
-					result = body;
-					if (response.statusCode>399 && response.statusCode<500) {
-						result = 'Request Error '+response.statusCode+': bad request';
-					};
-					if (response.statusCode>499) {
-						result = 'Server Error:'+response.statusCode+' unable to process request';
-					};
-				}
-				console.log('modifyY');
-				var y = { 	
+					var request1 = request;
+				}; 
+				if (x.key!=null){
+					encryptor.decryptFile(path+'.dec', path, x.key, function(err) {
+						return recognize(x, path, request1, res);
+					});
+				} else {
+				    return recognize(x, path, request1, res);
+					/*var result = '';
+	l_lang = 'rus-RUS';
+	if (x.lang.toUpperCase() == 'EN') {l_lang = 'eng-GBR'};
+	if (x.lang.toUpperCase() == 'CN') {l_lang = 'yue-CHN'};
+	if (x.lang.toUpperCase() == 'DE') {l_lang = 'deu-DEU'};
+			
+	in_file_wav = x.file + recognizingFormat;
+	tempFileWav = mainPath+in_file_wav;
+			
+	var proc = new ffmpeg({ source: path }).withAudioBitrate(recognizingAudioBitrate).withAudioFrequency(recognizingAudioFrequency).withAudioChannels(1).addOption('-hide_banner', '-y').saveToFile(in_file_wav, 
+	function(stdout, stderr) {
+		
+		var request1 = request.defaults({proxy: proxySettings});
+		request1({
+			url: recognizingURL, //URL to hit
+			qs: {appId: recognizingAppId, appKey: recognizingAppKey}, //Query string data
+			method: 'POST',
+			headers: {
+				'Content-Type': recognizingContentType,
+				'Accept': 'text/plain',
+				'Accept-Language': l_lang,
+				'Accept-Topic': 'Dictation',
+				'X-Dictation-NBestListSize': '1'
+			},
+			body: fs.readFileSync(tempFileWav) //Set the body as a string
+		}, function(error, response, body){
+			fs.unlinkSync(tempFileWav);
+			if(error) {
+				console.log(error);
+				result=error;
+			} else {
+				console.log(response.statusCode, body);
+				result = body;
+				if (response.statusCode>399 && response.statusCode<500) {
+					result = 'Request Error '+response.statusCode+': bad request';
+				};
+				if (response.statusCode>499) {
+					result = 'Server Error:'+response.statusCode+' unable to process request';
+				};
+			}
+			console.log('modifyY');
+			var y = { 	
 				success:x.success, 
 				error_text: result,
 				message_text: result
-				};
-				log.info('messagey2='+JSON.stringify(y));
-				return res.send(y);
-				});
-			})
-    		/*
-			post_data2 = x.file + 'START11223344' + x.file + '.wav' + 'START11223344' + l_lang;
-			var client2 = net.connect({port: 9090 , host:'10.2.3.118'},function() { //'connect' listener
-				console.log('Start nuance!');
-				client2.write(post_data2);
-				
-				
+			};
+			log.info('messagey2='+JSON.stringify(y));
+			fs.unlinkSync(path);
+			return res.send(y);
 			});
-			client2.on('data', function(data) {
-				log.info(data.toString());
-				p_file = in_file_after + '.wav';
-				l_pos =   data.toString().search(p_file);
-				if (l_pos > 0) {
-				    result = data.toString().substr(l_pos+p_file.length).replace('C:\Python27>echo off','').trim(); 
-				};
-				if (result.toUpperCase().search('ERROR') > 0) {
-					result = 'Recognition Error';
-				};
-				
-				client2.end();
-			});
-			client2.on('end', function() {
-				x.message_text = result;
-				return res.send(x);
-			});
-*/
-	};
-	} else {
-	var y = { 	
-				success:x.success, 
-				error_text: x.error_text
-				};
-				log.info('messagey2='+JSON.stringify(y));
-				return res.send(y);
-	}
-
-	
-	//return res.json(x).send;
+		})*/
+				}
+			} else { return sendTripleJSON(res, 0, 'NoData', '') }
+		} else { return sendTripleJSON(res, x.success, x.error_text, x.message_text) }
+	} else { return sendSimpleJSON(res, x.success, x.error_text) }
 };
 if (proc=='getMessagereplies'){
 	x = result.getmessagereplies;
@@ -2080,6 +2416,9 @@ if (proc=='getFavorites'){
 };
 if (proc=='deleteMessage'){
 	x = result.deletemessage;
+	if (x.success==1){
+		notify['s'+x.del_message_id].cancel();
+	};
 	return res.send(x);
 };
 if (proc=='postBlacklist'){
@@ -2094,7 +2433,8 @@ if (proc=='emailMessage') {
 	x = result.emailmessage;
 	if (x.success==1){
 // send mail
-		sendMail(x.email, x.mail_subject, x.mail_text); 
+		//sendMail(x.email, x.mail_subject, x.mail_text); 
+		sendMailWithAttachments(x.email, x.mail_subject, x.mail_text, x.key, x.path)
 // repack json 
     }; 
 	var y = { 	
@@ -2127,6 +2467,68 @@ if (proc=='getAuthortagmessages2'){
 	x = result.getauthortagmessages2;
 	return res.send(x);
 };
+
+
+
+if (proc=='handlerwork'){
+	x = result.handlerwork;
+	if (x.result) {
+		async.forEach(x.result, function (item, callback){ 
+			console.log(item); // print the key
+			if (item.method=='POST') {
+				log.info('url='+item.url);
+				var path = __dirname + '/img/' + item.file.path;
+				if (path!=undefined){
+					if (item.file.key!=null){
+						encryptor.decryptFile(path+'.dec', path, item.file.key, function(err) {
+							//fs.readFile(path, function (err, data) {
+// setup e-mail data with unicode symbols
+							sendAllDataToTTS(item.url, item.param_value, item.file.path, path, item.file.key);			
+						//});
+					})	
+					} else {
+						//fs.readFile(path, function (err, data) {
+							sendAllDataToTTS(item.url, item.param_value, item.file.path, path, item.file.key);
+						//});
+					}
+				}
+			}
+			if (item.method=='MAIL') {
+				sendMailWith2Attachments(item.email, item.subject, item.body, item.file.key, item.file.path, item.data, 'event.ics')
+			};
+			callback(); // tell async that the iterator has completed
+
+		}, function(err) {
+			console.log('iterating done');
+		}); 
+	
+	/*
+		for (var i=0;i<x.result.length;i++){
+			//y = x.result[i];
+			if (x.result[i].method=='POST') {
+				log.info('url='+x.result[i].url);
+				var path = __dirname + '/img/' + x.result[i].file.path;
+				if (path!=undefined){
+					if (x.result[i].file.key!=null){
+						encryptor.decryptFile(path+'.dec', path, x.result[i].file.key, function(err) {
+							fs.readFile(path, function (err, data) {
+// setup e-mail data with unicode symbols
+							sendAllDataToTTS(x.result[i].url, x.result[i].param_value, x.result[i].file.path, path, data, x.result[i].file.key);			
+						});
+					})	
+					} else {
+						fs.readFile(path, function (err, data) {
+							sendAllDataToTTS(x.result[i].url, x.result[i].param_value, x.result[i].file.path, path, data, x.result[i].file.key);
+						});
+					}
+				}
+			}
+			if (x.result[i].method=='MAIL') {
+				sendMailWith2Attachments(x.result[i].email, x.result[i].subject, x.result[i].body, x.result[i].file.key, x.result[i].file.path, x.result[i].data, 'event.ics')
+			};
+		}*/
+	}
+}
 }
 
 
@@ -2137,7 +2539,133 @@ app.get('/download/:file(*)', function(req, res, next){
   log.debug('file='+file);
   res.download(path);
 });
+//212.5.80.66:9951
 
+function sendAllDataToTTS(url1, param_value, file, path, key) {
+	var fileStats = fs.statSync(path); 
+	var fileSizeInBytes = fileStats["size"]; 
+	log.info('fileStats='+fileStats); 
+	log.info('fileSizeInBytes='+fileSizeInBytes);
+    httpreq.uploadFiles({
+	url: 'http://212.5.80.66:9951/tts/tts.download_file.upload1',
+    files:{
+        file: path
+    }
+}, function (error, response){
+    if(error){
+		log.info('error TTS1:'+error.message);
+		if (key!=null){fs.unlinkSync(path)};
+	}
+	else {
+		log.info('response TTs1:'+response.code+':'+response.body+url1);
+		in_request({
+			url: url1, //URL to hit
+			qs: {p_params: param_value + '###' + file}, //Query string data
+			method: 'GET'
+			//Set the body as a string
+		}, function(error, response, body){
+			if(error) {
+				console.log('error TTS2='+error);
+				if (key!=null){fs.unlinkSync(path)};
+				return;
+			} else {
+				console.log('response TTS2='+response.statusCode+'body='+body);
+				if (key!=null){fs.unlinkSync(path)};
+				return;
+			}
+		});
+	}
+})
+
+	
+
+/*	
+    var r = in_request.post('http://192.168.5.113:8081/tts/tts.download_file.upload1', function (err, res, body) {
+    if(err){
+		log.info('error TTS1:'+err.message);
+		if (key!=null){fs.unlinkSync(path)};
+	}
+	else {
+		log.info('response TTs1:'+res+':'+body+url1);
+		in_request({
+			url: url1, //URL to hit
+			qs: {p_params: param_value + '###' + file}, //Query string data
+			method: 'GET'
+			//Set the body as a string
+		}, function(error, response, body){
+			if(error) {
+				console.log('error TTS2='+error);
+				if (key!=null){fs.unlinkSync(path)};
+				return;
+			} else {
+				console.log('response TTS2='+response.statusCode+'body='+body);
+				if (key!=null){fs.unlinkSync(path)};
+				return;
+			}
+		});
+   }
+}
+);
+	var form = r.form();
+	form.append('file', fs.createReadStream(path));
+	*/
+}
+
+
+
+/*
+function sendAllDataToTTS(url1, param_value, file, path, key) {
+    log.info('url into='+url1);
+    var CRLF = '\r\n';
+	//var buf = fs.readFileSync(path);
+	//var data = 	'------aaaaaa'+CRLF+'Content-Disposition: form-data; name="file"; filename="'+file+'"'+CRLF+
+//'Content-Type: audio/wav'+CRLF+CRLF+  fs.readFileSync(path) + CRLF+'------aaaaaa--'+CRLF;
+	    log.info('start send to TTS');
+		
+
+
+		//log.info('length='+buf.length);
+		var fileStats = fs.statSync(path); 
+		var fileSizeInBytes = fileStats["size"]; 
+		log.info('fileStats='+fileStats); 
+		log.info('fileSizeInBytes='+fileSizeInBytes);
+	    in_request({
+		    //212.5.80.66:9951
+			url: 'http://192.168.5.113:8081/tts/tts.download_file.upload1', //URL to hit
+			method: 'POST',
+			headers: {
+				'Content-Type': 'multipart/form-data; boundary=----aaaaaa'
+			},
+			body: '------aaaaaa'+CRLF+'Content-Disposition: form-data; name="file"; filename="'+file+'"'+CRLF+
+'Content-Type: audio/wav'+CRLF+CRLF+  fs.readFileSync(path, 'UTF-8') + CRLF+'------aaaaaa--'+CRLF //Set the body as a string
+		}, function(err, resp, body){
+		 if(err){
+			log.info('error TTS1:'+err.message);
+			if (key!=null){fs.unlinkSync(path)};
+		}
+		else {
+			log.info('response TTs1:'+resp+':'+body+url1);
+			in_request({
+			url: url1, //URL to hit
+			qs: {p_params: param_value + '###' + file}, //Query string data
+			method: 'GET'
+			//Set the body as a string
+		}, function(error, response, body){
+			if(error) {
+				console.log('error TTS2='+error);
+				if (key!=null){fs.unlinkSync(path)};
+				return;
+			} else {
+				console.log('response TTS2='+response.statusCode+'body='+body);
+				if (key!=null){fs.unlinkSync(path)};
+				return;
+			}
+		});
+   }
+
+		});
+}
+*/
 
 function pg_connect(cs, proc, select_string, res) {
 pg.connect(cs, function(err, client, done) {
@@ -2156,9 +2684,32 @@ pg.connect(cs, function(err, client, done) {
   });
 });
 }
+
+app.get('/integrateTTS',function(req, res){
+	var str = req.query.str;
+	log.info(str);
+	//str = 'Текущие_задачи###202###тестовая задача######12.06.2015###202###202###Роскосмос###11111'	
+	var request = require('request');
+		request({
+			url: 'http://172.19.1.82/tts/tts.df_create_task.create_task', //URL to hit
+			qs: {p_params: str}, //Query string data
+			method: 'GET',
+			//Set the body as a string
+		}, function(error, response, body){
+			if(error) {
+					console.log(error);
+					result=error;
+					return res.send(response.statusCode+':'+error);
+			} else {
+					console.log(response.statusCode, body);
+					result = body;
+					return res.send(response.statusCode+':'+body);
+			}
+		});
+});
 	
 
 
-app.listen(process.argv[2], function(){
+app.listen(1337, function(){
     console.log('Express server listening on port 1337');
 });
