@@ -76,7 +76,7 @@ app.use(bodyParser.json()); // стандартный модуль, для парсинга JSON в запросах
 app.use(express.static(path.join(__dirname, "public"))); // запуск статического файлового сервера, который смотрит на папку public/ (в нашем случае отдает index.html)
 log.info('conString='+conString);
 pg_connect_get_users(conString);
-pg_connect_get_ntfy(conString);
+//pg_connect_get_ntfy(conString);
 
 
 app.get('/api', function (req, res) {
