@@ -1537,7 +1537,7 @@ function sendMailInner(transporter, to, subject, body, attachments, path, key){
 // send mail with defined transport object
 					transporter.sendMail(mailOptions, function(error, info){
 						if(error){
-							log.error('Internal error(%d): %s',err.message);
+							log.error('Internal error(%d): %s',error.message);
 //            return res.send({ error: 'Server error' });
 						}else{
 							log.info('Message sent');
